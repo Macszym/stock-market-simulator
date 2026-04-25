@@ -12,6 +12,7 @@
 /bin/
 /dist/
 /stock-market-simulator
+/server
 
 # Test binary, built with `go test -c`
 *.test
