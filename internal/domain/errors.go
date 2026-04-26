@@ -8,6 +8,9 @@ var (
 	ErrInsufficientBankStock   = errors.New("insufficient bank stock")
 	ErrInsufficientWalletStock = errors.New("insufficient wallet stock")
 	ErrInvalidOperation        = errors.New("invalid operation")
+	ErrEmptyStockName          = errors.New("empty stock name")
+	ErrInvalidQuantity         = errors.New("invalid quantity")
+	ErrDuplicateStockName      = errors.New("duplicate stock name")
 )
 
 type OperationType string
