@@ -1,0 +1,16 @@
+.git
+.github
+.gitignore
+.golangci.yml
+.editorconfig
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+bin
+dist
+docs
+README.md
+LICENSE
+Makefile
+deploy
