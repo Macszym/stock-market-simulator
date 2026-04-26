@@ -42,3 +42,6 @@ go.work.sum
 # OS
 .DS_Store
 Thumbs.db
+
+# Personal notes
+notes/
