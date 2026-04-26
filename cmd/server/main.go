@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/Macszym/stock-market-simulator/internal/config"
 )
 
 const shutdownTimeout = 5 * time.Second
@@ -16,9 +18,10 @@ const shutdownTimeout = 5 * time.Second
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("config load failed", "err", err)
+		os.Exit(1)
 	}
 
 	mux := http.NewServeMux()
@@ -28,7 +31,7 @@ func main() {
 	})
 
 	srv := &http.Server{
-		Addr:              ":" + port,
+		Addr:              ":" + cfg.HTTP.Port,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
