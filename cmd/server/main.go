@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,10 +19,16 @@ const shutdownTimeout = 5 * time.Second
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
+	if err := run(); err != nil {
+		slog.Error("server exited with error", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("config load failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	mux := http.NewServeMux()
@@ -51,17 +58,17 @@ func main() {
 	select {
 	case err := <-errCh:
 		if err != nil {
-			slog.Error("server failed to start", "err", err)
-			os.Exit(1)
+			return fmt.Errorf("listen: %w", err)
 		}
+		return nil
 	case <-ctx.Done():
 		slog.Info("shutdown signal received")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			slog.Error("graceful shutdown failed", "err", err)
-			os.Exit(1)
+			return fmt.Errorf("graceful shutdown: %w", err)
 		}
 		slog.Info("server stopped cleanly")
+		return nil
 	}
 }
