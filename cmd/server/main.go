@@ -11,7 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+
 	"github.com/Macszym/stock-market-simulator/internal/config"
+	"github.com/Macszym/stock-market-simulator/migrations"
 )
 
 const shutdownTimeout = 5 * time.Second
@@ -31,6 +36,35 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	poolCfg, err := pgxpool.ParseConfig(cfg.DB.DSN())
+	if err != nil {
+		return fmt.Errorf("parse db dsn: %w", err)
+	}
+	// MaxConns=10 leaves headroom against postgres default max_connections=100
+	// (2 HA instances * 10 + admin/migrations/tests). MinConns=2 keeps warm
+	// connections so the first request after startup does not pay auth latency.
+	poolCfg.MinConns = 2
+	poolCfg.MaxConns = 10
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		return fmt.Errorf("init db pool: %w", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		return fmt.Errorf("ping db: %w", err)
+	}
+	slog.Info("db connected", "host", cfg.DB.Host, "name", cfg.DB.Name)
+
+	if err := runMigrations(pool); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	slog.Info("migrations applied")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -42,9 +76,6 @@ func run() error {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -71,4 +102,18 @@ func run() error {
 		slog.Info("server stopped cleanly")
 		return nil
 	}
+}
+
+func runMigrations(pool *pgxpool.Pool) error {
+	db := stdlib.OpenDBFromPool(pool)
+	defer func() { _ = db.Close() }()
+
+	goose.SetBaseFS(migrations.FS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		return fmt.Errorf("set dialect: %w", err)
+	}
+	if err := goose.Up(db, "."); err != nil {
+		return fmt.Errorf("goose up: %w", err)
+	}
+	return nil
 }

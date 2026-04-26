@@ -8,10 +8,10 @@ CREATE TABLE wallets (
     id TEXT PRIMARY KEY
 );
 
--- wallet_stocks.stock_name celowo bez FK do bank_stocks(name).
--- POST /stocks nadpisuje cały bank (TRUNCATE+INSERT). Z FK musielibyśmy
--- albo CASCADE (kasowałoby portfele), albo failowałby TRUNCATE.
--- Bank traktujemy jak fluktuujący katalog, portfele jak historię własności.
+-- wallet_stocks.stock_name has no FK to bank_stocks(name) by design.
+-- POST /stocks rewrites the entire bank (TRUNCATE+INSERT); a FK would
+-- force either CASCADE (wiping wallets) or make TRUNCATE fail.
+-- Bank is treated as a fluctuating catalog, wallet_stocks as ownership history.
 CREATE TABLE wallet_stocks (
     wallet_id  TEXT   NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
     stock_name TEXT   NOT NULL,

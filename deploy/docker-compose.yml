@@ -23,6 +23,12 @@ services:
       dockerfile: deploy/Dockerfile
     environment:
       PORT: "8080"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-stocksim}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-stocksim}
+      DB_NAME: ${POSTGRES_DB:-stocksim}
+      DB_SSLMODE: disable
     ports:
       - "8080:8080"
     depends_on:
