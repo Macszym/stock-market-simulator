@@ -5,15 +5,19 @@ package domain
 import "time"
 
 type Stock struct {
-	Name     string
-	Quantity int64
+	Name     string `json:"name"`
+	Quantity int64  `json:"quantity"`
 }
 
 type Wallet struct {
-	ID     string
-	Stocks []Stock
+	ID     string  `json:"id"`
+	Stocks []Stock `json:"stocks"`
 }
 
+// AuditEntry has no JSON tags by design: the GET /log response shape exposes
+// only {type, wallet_id, stock_name} with a lowercase operation, while this
+// type keeps ID/CreatedAt internally for ordering and debugging. The HTTP
+// layer converts this to its own DTO.
 type AuditEntry struct {
 	ID        int64
 	Operation OperationType
