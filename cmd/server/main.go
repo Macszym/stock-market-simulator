@@ -15,7 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/Macszym/stock-market-simulator/internal/api"
 	"github.com/Macszym/stock-market-simulator/internal/config"
+	"github.com/Macszym/stock-market-simulator/internal/service"
+	"github.com/Macszym/stock-market-simulator/internal/storage"
 	"github.com/Macszym/stock-market-simulator/migrations"
 )
 
@@ -65,22 +68,20 @@ func run() error {
 	}
 	slog.Info("migrations applied")
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	repo := storage.NewPostgres(pool)
+	svc := service.NewService(repo, slog.Default())
+	srv := api.NewServer(svc, slog.Default())
 
-	srv := &http.Server{
+	httpSrv := &http.Server{
 		Addr:              ":" + cfg.HTTP.Port,
-		Handler:           mux,
+		Handler:           srv,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("server starting", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Info("server starting", "addr", httpSrv.Addr)
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)
@@ -96,7 +97,7 @@ func run() error {
 		slog.Info("shutdown signal received")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("graceful shutdown: %w", err)
 		}
 		slog.Info("server stopped cleanly")
