@@ -4,9 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Macszym/stock-market-simulator/internal/domain"
 )
+
+// chaosShutdownDelay gives the response time to leave the socket before the
+// shutdown signal cancels in-flight connections. Without it the client sees
+// EOF or, behind a load balancer, a 502.
+const chaosShutdownDelay = 100 * time.Millisecond
 
 type stocksResponse struct {
 	Stocks []domain.Stock `json:"stocks"`
@@ -134,6 +140,17 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toLogResponse(entries))
+}
+
+// handleChaos triggers the same graceful shutdown path as SIGTERM. The shutdown
+// runs in a goroutine after a short delay so the response leaves the socket
+// before the listener is torn down.
+func (s *Server) handleChaos(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusAccepted, map[string]string{"message": "shutting down"})
+	go func() {
+		time.Sleep(chaosShutdownDelay)
+		s.chaos()
+	}()
 }
 
 func toLogResponse(entries []domain.AuditEntry) logResponse {

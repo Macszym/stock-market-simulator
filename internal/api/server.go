@@ -11,13 +11,19 @@ import (
 type Server struct {
 	svc    *service.Service
 	logger *slog.Logger
+	chaos  func()
 	mux    *http.ServeMux
 }
 
-func NewServer(svc *service.Service, logger *slog.Logger) *Server {
+// NewServer wires HTTP routes to service operations. The chaos function is
+// invoked by POST /chaos to trigger the instance shutdown; in production it is
+// the cancel returned by signal.NotifyContext so the kill path is identical to
+// receiving SIGTERM.
+func NewServer(svc *service.Service, logger *slog.Logger, chaos func()) *Server {
 	s := &Server{
 		svc:    svc,
 		logger: logger,
+		chaos:  chaos,
 		mux:    http.NewServeMux(),
 	}
 	s.routes()
@@ -32,6 +38,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /wallets/{wallet_id}/stocks/{stock_name}", s.handleGetWalletStockQuantity)
 	s.mux.HandleFunc("POST /wallets/{wallet_id}/stocks/{stock_name}", s.handleBuySell)
 	s.mux.HandleFunc("GET /log", s.handleGetLog)
+	s.mux.HandleFunc("POST /chaos", s.handleChaos)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -70,7 +70,7 @@ func run() error {
 
 	repo := storage.NewPostgres(pool)
 	svc := service.NewService(repo, slog.Default())
-	srv := api.NewServer(svc, slog.Default())
+	srv := api.NewServer(svc, slog.Default(), stop)
 
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.HTTP.Port,
