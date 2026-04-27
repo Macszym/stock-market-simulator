@@ -44,8 +44,8 @@ All endpoints accept and return JSON. Wallet IDs and stock names are arbitrary s
 | `GET`  | `/wallets/{wallet_id}` | ✓ | Returns `{"id":"...","stocks":[...]}` or 404 if missing |
 | `GET`  | `/wallets/{wallet_id}/stocks/{stock_name}` | ✓ | Returns a bare JSON number (e.g. `99`); 0 if the wallet has no holding for that stock |
 | `GET`  | `/log` | ✓ | Returns `{"log":[{"type":"buy","wallet_id":"...","stock_name":"..."}]}`, ordered by occurrence |
-| `POST` | `/wallets/{wallet_id}/stocks/{stock_name}` | coming | Body `{"type":"buy"\|"sell"}`. Atomic with audit log. Auto-creates wallet on first buy |
-| `POST` | `/chaos` | coming | Kills the instance serving the request (HA scenario) |
+| `POST` | `/wallets/{wallet_id}/stocks/{stock_name}` | ✓ | Body `{"type":"buy"\|"sell"}`. One unit moves between bank and wallet, audit log entry written in the same DB transaction. Auto-creates the wallet on first buy. Returns 200 with empty body on success |
+| `POST` | `/chaos` | ✓ | Returns 202 with `{"message":"shutting down"}` and triggers graceful self-shutdown - same code path as SIGTERM. Used to exercise HA failover |
 
 ### Example
 
@@ -62,6 +62,19 @@ curl http://localhost:8080/stocks
 curl -i http://localhost:8080/wallets/does-not-exist
 # HTTP/1.1 404 Not Found
 # {"error":"wallet not found","code":"WALLET_NOT_FOUND"}
+
+# Buy and sell
+curl -X POST http://localhost:8080/wallets/w1/stocks/AAPL -d '{"type":"buy"}'
+curl -X POST http://localhost:8080/wallets/w1/stocks/AAPL -d '{"type":"sell"}'
+
+# Audit log captures successful operations only
+curl http://localhost:8080/log
+# {"log":[{"type":"buy","wallet_id":"w1","stock_name":"AAPL"},{"type":"sell","wallet_id":"w1","stock_name":"AAPL"}]}
+
+# Trigger a chaos shutdown (instance restarts under compose's restart policy)
+curl -X POST http://localhost:8080/chaos
+# HTTP/1.1 202 Accepted
+# {"message":"shutting down"}
 ```
 
 ## API Errors
@@ -91,6 +104,10 @@ All error responses share the same shape: `{"error":"human message","code":"STAB
 - **Hybrid JSON tagging.** `Stock` and `Wallet` carry JSON tags inline (their wire shape is 1:1 with the domain). `AuditEntry` has no tags - its response shape (3 fields, lowercase `type`) diverges, so the HTTP layer owns a dedicated DTO. Envelope shapes (`{"stocks":[...]}`, `{"log":[...]}`) live in the api package as request/response wrappers, not as domain concepts.
 - **`Repository` interface defined in `internal/service`.** Consumer-defined interfaces are idiomatic Go: the service declares what it needs, storage need not export an interface, and tests can drop in an in-memory fake without importing storage.
 - **Sentinel errors in `internal/domain` + `mapError` in `internal/api`.** Cross-layer errors are sentinels (testable with `errors.Is`); the HTTP layer owns status code and stable-enum mapping. Server-side logging is gated on status >= 500 so 4xx client mistakes do not flood logs.
+- **Buy/sell and the audit log share one transaction.** The state mutation (UPDATE on `bank_stocks` + UPSERT on `wallet_stocks`) and the `INSERT` into `audit_log` live inside one `pool.Begin`/`Commit`. Either the operation and the audit row both persist, or neither does. This is the load-bearing guarantee that lets the audit log be trusted as a record of what actually happened - the reason Postgres was picked as the only datastore in the first place.
+- **Atomic decrement uses `UPDATE ... WHERE quantity > 0`, not `SELECT ... FOR UPDATE` followed by application-level checks.** The conditional update is atomic at the SQL level; zero rows affected means depletion. A `SELECT FOR UPDATE` is still issued first, but only to distinguish "stock unknown to the bank" (404) from "stock exists but is depleted" (400). Read-Committed isolation is sufficient because the per-row lock and conditional update together prevent lost updates without forcing the retry loops a `Serializable` level would require.
+- **Sell never auto-creates a wallet.** Buy treats the wallet as auto-created on first acquisition (matching the spec). Sell on a missing wallet returns 400 `INSUFFICIENT_WALLET_STOCK` - the same code as sell on an empty holding. There is no meaningful "first sale" without prior state, so the symmetry with buy is intentionally broken.
+- **`POST /chaos` triggers the same shutdown path as SIGTERM.** The handler returns 202 immediately, then a goroutine sleeps 100 ms (so the response leaves the socket) and calls the cancel function returned by `signal.NotifyContext`. The main goroutine's `<-ctx.Done()` branch runs `httpSrv.Shutdown` exactly as it would on SIGTERM - one shutdown code path, exercised two ways.
 
 ## Development
 
@@ -116,6 +133,15 @@ Two loops:
 - **Integration tests** (`make test-integration`) - repository against a real Postgres 18.3 launched by testcontainers-go, schema applied via the same embedded goose migrations the binary uses. Container start is the bulk of the time (~7s cold, ~1s warm); each test uses `TRUNCATE ... RESTART IDENTITY CASCADE` for a deterministic state without paying container startup between tests.
 
 Both suites run in CI as parallel jobs.
+
+### Concurrency tests
+
+`tests/integration/concurrency_test.go` runs two scenarios under the `-race` detector:
+
+- **Race for limited bank stock.** The bank holds 50 of one symbol, 100 goroutines each call `BuyStock` for that symbol into a distinct wallet. Postgres' per-row `SELECT FOR UPDATE` plus conditional `UPDATE WHERE quantity > 0` must serialize the contention so that exactly 50 buys succeed, exactly 50 fail with `INSUFFICIENT_BANK_STOCK`, the bank ends at 0, the wallets together hold 50 units, and the audit log carries exactly 50 BUY entries.
+- **Mixed buy/sell preserves the total.** The bank holds 100 of one symbol and a preloaded wallet holds another 100 of the same symbol. 100 concurrent buys (each into a fresh wallet) and 100 concurrent sells (all from the preloaded wallet) run interleaved. After the dust settles, `bank.quantity + sum(wallet_stocks.quantity)` must equal 200 - no stock created, none destroyed - and the audit log row count must equal the number of successful operations, broken down correctly between BUY and SELL.
+
+These two tests are the closest we get to proving the FinTech contract: stock cannot evaporate, cannot multiply, and the audit log mirrors reality exactly.
 
 ## License
 
