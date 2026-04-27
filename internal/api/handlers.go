@@ -12,6 +12,10 @@ type stocksResponse struct {
 	Stocks []domain.Stock `json:"stocks"`
 }
 
+type buySellRequest struct {
+	Type string `json:"type"`
+}
+
 type setStocksRequest struct {
 	Stocks []domain.Stock `json:"stocks"`
 }
@@ -84,6 +88,39 @@ func (s *Server) handleGetWalletStockQuantity(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, qty)
+}
+
+func (s *Server) handleBuySell(w http.ResponseWriter, r *http.Request) {
+	var req buySellRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed JSON body")
+		return
+	}
+
+	walletID := r.PathValue("wallet_id")
+	stockName := r.PathValue("stock_name")
+
+	var err error
+	switch req.Type {
+	case "buy":
+		err = s.svc.BuyStock(r.Context(), walletID, stockName)
+	case "sell":
+		err = s.svc.SellStock(r.Context(), walletID, stockName)
+	default:
+		writeError(w, http.StatusBadRequest, "INVALID_OPERATION", "type must be 'buy' or 'sell'")
+		return
+	}
+
+	if err != nil {
+		status, code, msg := mapError(err)
+		if status >= 500 {
+			s.logger.Error("buy/sell failed", "err", err, "type", req.Type,
+				"wallet_id", walletID, "stock_name", stockName)
+		}
+		writeError(w, status, code, msg)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {

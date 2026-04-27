@@ -30,6 +30,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /stocks", s.handleSetStocks)
 	s.mux.HandleFunc("GET /wallets/{wallet_id}", s.handleGetWallet)
 	s.mux.HandleFunc("GET /wallets/{wallet_id}/stocks/{stock_name}", s.handleGetWalletStockQuantity)
+	s.mux.HandleFunc("POST /wallets/{wallet_id}/stocks/{stock_name}", s.handleBuySell)
 	s.mux.HandleFunc("GET /log", s.handleGetLog)
 }
 
