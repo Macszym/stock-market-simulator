@@ -1,4 +1,4 @@
-.PHONY: help run build test lint compose-up compose-down clean
+.PHONY: help run build test test-integration lint compose-up compose-down db-shell clean
 
 BIN_DIR := bin
 BINARY  := $(BIN_DIR)/server
@@ -18,8 +18,11 @@ run: ## Run the server locally
 build: ## Build static binary into bin/server (CGO disabled, stripped)
 	CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) -o $(BINARY) $(PKG)
 
-test: ## Run all tests with race detector
+test: ## Run unit tests with race detector (integration tests excluded)
 	go test -race ./...
+
+test-integration: ## Run integration tests against Postgres in testcontainers
+	go test -race -tags=integration ./tests/integration/...
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...
@@ -29,6 +32,9 @@ compose-up: ## Start the full stack (foreground, with rebuild)
 
 compose-down: ## Stop the stack (volumes preserved)
 	docker compose -f $(COMPOSE_FILE) down
+
+db-shell: ## Open psql shell on the running compose Postgres
+	docker compose -f $(COMPOSE_FILE) exec postgres psql -U stocksim
 
 clean: ## Remove built artifacts
 	rm -rf $(BIN_DIR)
