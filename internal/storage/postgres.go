@@ -72,6 +72,73 @@ func (p *Postgres) SetBankStocks(ctx context.Context, stocks []domain.Stock) err
 	return nil
 }
 
+// BuyStock moves one unit of stockName from the bank into walletID's holdings
+// and writes a BUY entry to the audit log, all in a single transaction.
+//
+// The audit insert lives inside the same transaction as the state mutation:
+// either both persist or neither does. This is the load-bearing guarantee
+// that lets the audit log be trusted as a record of what actually happened.
+func (p *Postgres) BuyStock(ctx context.Context, walletID, stockName string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the bank row and confirm the stock is a known symbol.
+	var bankQty int64
+	err = tx.QueryRow(ctx,
+		`SELECT quantity FROM bank_stocks WHERE name = $1 FOR UPDATE`,
+		stockName,
+	).Scan(&bankQty)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrStockNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock bank_stocks %q: %w", stockName, err)
+	}
+
+	// Atomic decrement guarded by quantity > 0. Zero rows affected means the
+	// row exists (we just locked it) but is depleted.
+	ct, err := tx.Exec(ctx,
+		`UPDATE bank_stocks SET quantity = quantity - 1 WHERE name = $1 AND quantity > 0`,
+		stockName,
+	)
+	if err != nil {
+		return fmt.Errorf("decrement bank_stocks %q: %w", stockName, err)
+	}
+	if ct.RowsAffected() == 0 {
+		return domain.ErrInsufficientBankStock
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO wallets (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
+		walletID,
+	); err != nil {
+		return fmt.Errorf("upsert wallet %q: %w", walletID, err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO wallet_stocks (wallet_id, stock_name, quantity) VALUES ($1, $2, 1)
+		 ON CONFLICT (wallet_id, stock_name) DO UPDATE SET quantity = wallet_stocks.quantity + 1`,
+		walletID, stockName,
+	); err != nil {
+		return fmt.Errorf("upsert wallet_stocks %q/%q: %w", walletID, stockName, err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO audit_log (operation, wallet_id, stock_name) VALUES ('BUY', $1, $2)`,
+		walletID, stockName,
+	); err != nil {
+		return fmt.Errorf("insert audit_log: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
+}
+
 func (p *Postgres) GetWallet(ctx context.Context, id string) (domain.Wallet, error) {
 	exists, err := p.walletExists(ctx, id)
 	if err != nil {
