@@ -139,6 +139,66 @@ func (p *Postgres) BuyStock(ctx context.Context, walletID, stockName string) err
 	return nil
 }
 
+// SellStock returns one unit of stockName from walletID's holdings back to the
+// bank and writes a SELL entry to the audit log, all in a single transaction.
+//
+// The audit insert lives inside the same transaction as the state mutation:
+// either both persist or neither does. This is the load-bearing guarantee
+// that lets the audit log be trusted as a record of what actually happened.
+func (p *Postgres) SellStock(ctx context.Context, walletID, stockName string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Confirm the stock is a known symbol and lock its bank row for the
+	// upcoming increment.
+	var bankQty int64
+	err = tx.QueryRow(ctx,
+		`SELECT quantity FROM bank_stocks WHERE name = $1 FOR UPDATE`,
+		stockName,
+	).Scan(&bankQty)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrStockNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock bank_stocks %q: %w", stockName, err)
+	}
+
+	// Atomic decrement guarded by quantity > 0. Zero rows affected covers
+	// missing wallet, missing holding and depleted holding alike.
+	ct, err := tx.Exec(ctx,
+		`UPDATE wallet_stocks SET quantity = quantity - 1 WHERE wallet_id = $1 AND stock_name = $2 AND quantity > 0`,
+		walletID, stockName,
+	)
+	if err != nil {
+		return fmt.Errorf("decrement wallet_stocks %q/%q: %w", walletID, stockName, err)
+	}
+	if ct.RowsAffected() == 0 {
+		return domain.ErrInsufficientWalletStock
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE bank_stocks SET quantity = quantity + 1 WHERE name = $1`,
+		stockName,
+	); err != nil {
+		return fmt.Errorf("increment bank_stocks %q: %w", stockName, err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO audit_log (operation, wallet_id, stock_name) VALUES ('SELL', $1, $2)`,
+		walletID, stockName,
+	); err != nil {
+		return fmt.Errorf("insert audit_log: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
+}
+
 func (p *Postgres) GetWallet(ctx context.Context, id string) (domain.Wallet, error) {
 	exists, err := p.walletExists(ctx, id)
 	if err != nil {
