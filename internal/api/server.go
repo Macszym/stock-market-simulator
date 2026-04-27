@@ -26,6 +26,11 @@ func NewServer(svc *service.Service, logger *slog.Logger) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /stocks", s.handleGetStocks)
+	s.mux.HandleFunc("POST /stocks", s.handleSetStocks)
+	s.mux.HandleFunc("GET /wallets/{wallet_id}", s.handleGetWallet)
+	s.mux.HandleFunc("GET /wallets/{wallet_id}/stocks/{stock_name}", s.handleGetWalletStockQuantity)
+	s.mux.HandleFunc("GET /log", s.handleGetLog)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
