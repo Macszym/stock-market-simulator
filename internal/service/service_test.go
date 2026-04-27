@@ -255,3 +255,109 @@ func TestService_GetAuditLog_WithEntries(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.Equal(t, domain.OperationBuy, entries[0].Operation)
 }
+
+func TestService_BuyStock_AutoCreatesWallet(t *testing.T) {
+	repo := newFakeRepo()
+	repo.bank = map[string]int64{"AAPL": 5}
+	svc := newTestService(repo)
+
+	err := svc.BuyStock(context.Background(), "w1", "AAPL")
+	require.NoError(t, err)
+	require.Equal(t, int64(4), repo.bank["AAPL"])
+	require.Equal(t, int64(1), repo.wallets["w1"]["AAPL"])
+	require.Len(t, repo.auditLog, 1)
+	require.Equal(t, domain.OperationBuy, repo.auditLog[0].Operation)
+	require.Equal(t, "w1", repo.auditLog[0].WalletID)
+	require.Equal(t, "AAPL", repo.auditLog[0].StockName)
+}
+
+func TestService_BuyStock_IncrementsExistingHolding(t *testing.T) {
+	repo := newFakeRepo()
+	repo.bank = map[string]int64{"AAPL": 5}
+	repo.wallets["w1"] = map[string]int64{"AAPL": 2}
+	svc := newTestService(repo)
+
+	err := svc.BuyStock(context.Background(), "w1", "AAPL")
+	require.NoError(t, err)
+	require.Equal(t, int64(4), repo.bank["AAPL"])
+	require.Equal(t, int64(3), repo.wallets["w1"]["AAPL"])
+}
+
+func TestService_BuyStock_StockNotFound(t *testing.T) {
+	repo := newFakeRepo()
+	svc := newTestService(repo)
+
+	err := svc.BuyStock(context.Background(), "w1", "AAPL")
+	require.ErrorIs(t, err, domain.ErrStockNotFound)
+	require.Empty(t, repo.wallets, "wallet must not be created on failure")
+	require.Empty(t, repo.auditLog, "no audit entry on failure")
+}
+
+func TestService_BuyStock_InsufficientBankStock(t *testing.T) {
+	repo := newFakeRepo()
+	repo.bank = map[string]int64{"AAPL": 0}
+	svc := newTestService(repo)
+
+	err := svc.BuyStock(context.Background(), "w1", "AAPL")
+	require.ErrorIs(t, err, domain.ErrInsufficientBankStock)
+	require.Equal(t, int64(0), repo.bank["AAPL"])
+	require.Empty(t, repo.wallets)
+	require.Empty(t, repo.auditLog)
+}
+
+func TestService_SellStock_HappyPath(t *testing.T) {
+	repo := newFakeRepo()
+	repo.bank = map[string]int64{"AAPL": 5}
+	repo.wallets["w1"] = map[string]int64{"AAPL": 3}
+	svc := newTestService(repo)
+
+	err := svc.SellStock(context.Background(), "w1", "AAPL")
+	require.NoError(t, err)
+	require.Equal(t, int64(6), repo.bank["AAPL"])
+	require.Equal(t, int64(2), repo.wallets["w1"]["AAPL"])
+	require.Len(t, repo.auditLog, 1)
+	require.Equal(t, domain.OperationSell, repo.auditLog[0].Operation)
+}
+
+// 404 (stock not in bank) wins over 400 (wallet would be sufficient).
+func TestService_SellStock_StockNotFoundWinsOverWalletState(t *testing.T) {
+	repo := newFakeRepo()
+	repo.wallets["w1"] = map[string]int64{"AAPL": 3}
+	svc := newTestService(repo)
+
+	err := svc.SellStock(context.Background(), "w1", "AAPL")
+	require.ErrorIs(t, err, domain.ErrStockNotFound)
+	require.Equal(t, int64(3), repo.wallets["w1"]["AAPL"], "holding untouched")
+	require.Empty(t, repo.auditLog)
+}
+
+func TestService_SellStock_MissingWallet(t *testing.T) {
+	repo := newFakeRepo()
+	repo.bank = map[string]int64{"AAPL": 5}
+	svc := newTestService(repo)
+
+	err := svc.SellStock(context.Background(), "missing", "AAPL")
+	require.ErrorIs(t, err, domain.ErrInsufficientWalletStock)
+	require.Equal(t, int64(5), repo.bank["AAPL"], "bank unchanged")
+	require.Empty(t, repo.auditLog)
+}
+
+func TestService_SellStock_ExistingWalletNoHolding(t *testing.T) {
+	repo := newFakeRepo()
+	repo.bank = map[string]int64{"AAPL": 5}
+	repo.wallets["w1"] = map[string]int64{}
+	svc := newTestService(repo)
+
+	err := svc.SellStock(context.Background(), "w1", "AAPL")
+	require.ErrorIs(t, err, domain.ErrInsufficientWalletStock)
+}
+
+func TestService_SellStock_ZeroHolding(t *testing.T) {
+	repo := newFakeRepo()
+	repo.bank = map[string]int64{"AAPL": 5}
+	repo.wallets["w1"] = map[string]int64{"AAPL": 0}
+	svc := newTestService(repo)
+
+	err := svc.SellStock(context.Background(), "w1", "AAPL")
+	require.ErrorIs(t, err, domain.ErrInsufficientWalletStock)
+}
