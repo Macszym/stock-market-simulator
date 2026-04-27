@@ -90,6 +90,28 @@ func (f *fakeRepo) BuyStock(_ context.Context, walletID, stockName string) error
 	return nil
 }
 
+func (f *fakeRepo) SellStock(_ context.Context, walletID, stockName string) error {
+	if _, ok := f.bank[stockName]; !ok {
+		return domain.ErrStockNotFound
+	}
+	holdings, ok := f.wallets[walletID]
+	if !ok {
+		return domain.ErrInsufficientWalletStock
+	}
+	qty, ok := holdings[stockName]
+	if !ok || qty <= 0 {
+		return domain.ErrInsufficientWalletStock
+	}
+	holdings[stockName] = qty - 1
+	f.bank[stockName]++
+	f.auditLog = append(f.auditLog, domain.AuditEntry{
+		Operation: domain.OperationSell,
+		WalletID:  walletID,
+		StockName: stockName,
+	})
+	return nil
+}
+
 func newTestService(repo Repository) *Service {
 	return NewService(repo, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }

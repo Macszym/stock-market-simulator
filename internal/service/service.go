@@ -20,6 +20,7 @@ type Repository interface {
 	GetWalletStockQuantity(ctx context.Context, walletID, stockName string) (int64, error)
 	GetAuditLog(ctx context.Context) ([]domain.AuditEntry, error)
 	BuyStock(ctx context.Context, walletID, stockName string) error
+	SellStock(ctx context.Context, walletID, stockName string) error
 }
 
 type Service struct {
@@ -74,5 +75,13 @@ func (s *Service) BuyStock(ctx context.Context, walletID, stockName string) erro
 		return err
 	}
 	s.logger.Info("stock bought", "wallet_id", walletID, "stock_name", stockName)
+	return nil
+}
+
+func (s *Service) SellStock(ctx context.Context, walletID, stockName string) error {
+	if err := s.repo.SellStock(ctx, walletID, stockName); err != nil {
+		return err
+	}
+	s.logger.Info("stock sold", "wallet_id", walletID, "stock_name", stockName)
 	return nil
 }
