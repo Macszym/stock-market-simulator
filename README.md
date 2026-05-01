@@ -2,7 +2,7 @@
 
 REST API simulating a simplified stock exchange with a single bank as the sole liquidity source. Built for the Remitly internship recruitment task.
 
-[![CI](https://github.com/Macszym/stock-market-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/Macszym/stock-market-simulator/actions/workflows/ci.yml)
+[![CI](https://github.com/Macszym/stock-market-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/Macszym/stock-market-simulator/actions/workflows/ci.yml) ![Go](https://img.shields.io/badge/Go-1.26+-00ADD8) [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ## Quick Start
 
@@ -65,18 +65,18 @@ Postgres is intentionally **not** replicated. Real database HA (streaming replic
 
 ## API
 
-All endpoints accept and return JSON. Wallet IDs and stock names are arbitrary strings.
+All endpoints accept and return JSON. Wallet IDs and stock names are arbitrary strings. The full OpenAPI 3.1 spec is in [`docs/openapi.yaml`](docs/openapi.yaml).
 
-| Method | Path | Status | Notes |
-|---|---|---|---|
-| `GET`  | `/healthz` | ✓ | Liveness probe, returns `{"status":"ok"}` |
-| `GET`  | `/stocks` | ✓ | Returns `{"stocks":[{"name":"...","quantity":N}]}` |
-| `POST` | `/stocks` | ✓ | Body `{"stocks":[...]}`. Replaces the entire bank. Returns 200 with no body |
-| `GET`  | `/wallets/{wallet_id}` | ✓ | Returns `{"id":"...","stocks":[...]}` or 404 if missing |
-| `GET`  | `/wallets/{wallet_id}/stocks/{stock_name}` | ✓ | Returns a bare JSON number (e.g. `99`); 0 if the wallet has no holding for that stock |
-| `GET`  | `/log` | ✓ | Returns `{"log":[{"type":"buy","wallet_id":"...","stock_name":"..."}]}`, ordered by occurrence |
-| `POST` | `/wallets/{wallet_id}/stocks/{stock_name}` | ✓ | Body `{"type":"buy"\|"sell"}`. One unit moves between bank and wallet, audit log entry written in the same DB transaction. Auto-creates the wallet on first buy. Returns 200 with empty body on success |
-| `POST` | `/chaos` | ✓ | Returns 202 with `{"message":"shutting down"}` and triggers graceful self-shutdown - same code path as SIGTERM. Used to exercise HA failover |
+| Method | Path | Notes |
+|---|---|---|
+| `GET`  | `/healthz` | Liveness probe, returns `{"status":"ok"}` |
+| `GET`  | `/stocks` | Returns `{"stocks":[{"name":"...","quantity":N}]}` |
+| `POST` | `/stocks` | Body `{"stocks":[...]}`. Replaces the entire bank. Returns 200 with no body |
+| `GET`  | `/wallets/{wallet_id}` | Returns `{"id":"...","stocks":[...]}` or 404 if missing |
+| `GET`  | `/wallets/{wallet_id}/stocks/{stock_name}` | Returns a bare JSON number (e.g. `99`); 0 if the wallet has no holding for that stock |
+| `GET`  | `/log` | Returns `{"log":[{"type":"buy","wallet_id":"...","stock_name":"..."}]}`, ordered by occurrence |
+| `POST` | `/wallets/{wallet_id}/stocks/{stock_name}` | Body `{"type":"buy"\|"sell"}`. One unit moves between bank and wallet, audit log entry written in the same DB transaction. Auto-creates the wallet on first buy. Returns 200 with empty body on success |
+| `POST` | `/chaos` | Returns 202 with `{"message":"shutting down"}` and triggers graceful self-shutdown - same code path as SIGTERM. Used to exercise HA failover |
 
 ### Example
 
@@ -127,15 +127,16 @@ All error responses share the same shape: `{"error":"human message","code":"STAB
 
 ## Design Decisions
 
-- **Single Postgres as source of truth.** Wallet state, bank state and audit log live in one DB so buy/sell + audit can be one transaction - atomicity without 2-phase commit or eventual consistency.
+- **Single Postgres as source of truth.** Wallet state, bank state and audit log live in one DB so buy/sell + audit can be one transaction - atomicity without 2-phase commit or eventual consistency. See [ADR 0003](docs/adr/0003-postgres-over-redis.md).
 - **`POST /stocks` rewrites the bank with `TRUNCATE` + `INSERT` in a transaction.** Faster than `DELETE` (no per-row triggers, less WAL), naturally matches "overwrite" semantics, transactional rollback if the inserts fail.
 - **No FK between `wallet_stocks.stock_name` and `bank_stocks(name)`.** A FK with `CASCADE` would wipe wallets on `POST /stocks`; without `CASCADE` the `TRUNCATE` would fail. Bank is treated as a fluctuating catalog, wallet_stocks as ownership history.
 - **`audit_log.id BIGINT GENERATED ALWAYS AS IDENTITY`.** SQL standard since Postgres 10. `ALWAYS` blocks application-supplied IDs (requires explicit `OVERRIDING SYSTEM VALUE`), eliminating a class of bugs where dump/restore desynchronises sequences.
-- **Goose migrations embedded in the binary** (`//go:embed *.sql` + `goose.SetBaseFS`). The distroless runtime ships migrations inside the binary; nobody can swap SQL files post-deploy.
+- **Goose migrations embedded in the binary** (`//go:embed *.sql` + `goose.SetBaseFS`). The distroless runtime ships migrations inside the binary; nobody can swap SQL files post-deploy. See [ADR 0006](docs/adr/0006-goose-embedded-migrations.md).
 - **Hybrid JSON tagging.** `Stock` and `Wallet` carry JSON tags inline (their wire shape is 1:1 with the domain). `AuditEntry` has no tags - its response shape (3 fields, lowercase `type`) diverges, so the HTTP layer owns a dedicated DTO. Envelope shapes (`{"stocks":[...]}`, `{"log":[...]}`) live in the api package as request/response wrappers, not as domain concepts.
 - **`Repository` interface defined in `internal/service`.** Consumer-defined interfaces are idiomatic Go: the service declares what it needs, storage need not export an interface, and tests can drop in an in-memory fake without importing storage.
+- **`net/http` standard library for routing.** Go 1.22+ adds method-aware route patterns (`GET /wallets/{wallet_id}`) and named path parameters to `http.ServeMux`, which removes the historical need for chi, gin or gorilla/mux. Wrong-method requests return `405 Method Not Allowed` automatically with no extra code. See [ADR 0004](docs/adr/0004-stdlib-net-http.md).
 - **Sentinel errors in `internal/domain` + `mapError` in `internal/api`.** Cross-layer errors are sentinels (testable with `errors.Is`); the HTTP layer owns status code and stable-enum mapping. Server-side logging is gated on status >= 500 so 4xx client mistakes do not flood logs.
-- **Buy/sell and the audit log share one transaction.** The state mutation (UPDATE on `bank_stocks` + UPSERT on `wallet_stocks`) and the `INSERT` into `audit_log` live inside one `pool.Begin`/`Commit`. Either the operation and the audit row both persist, or neither does. This is the load-bearing guarantee that lets the audit log be trusted as a record of what actually happened - the reason Postgres was picked as the only datastore in the first place.
+- **Buy/sell and the audit log share one transaction.** The state mutation (UPDATE on `bank_stocks` + UPSERT on `wallet_stocks`) and the `INSERT` into `audit_log` live inside one `pool.Begin`/`Commit`. Either the operation and the audit row both persist, or neither does. This is the load-bearing guarantee that lets the audit log be trusted as a record of what actually happened - the reason Postgres was picked as the only datastore in the first place. See [ADR 0005](docs/adr/0005-audit-log-in-transaction.md).
 - **Atomic decrement uses `UPDATE ... WHERE quantity > 0`, not `SELECT ... FOR UPDATE` followed by application-level checks.** The conditional update is atomic at the SQL level; zero rows affected means depletion. A `SELECT FOR UPDATE` is still issued first, but only to distinguish "stock unknown to the bank" (404) from "stock exists but is depleted" (400). Read-Committed isolation is sufficient because the per-row lock and conditional update together prevent lost updates without forcing the retry loops a `Serializable` level would require.
 - **Sell never auto-creates a wallet.** Buy treats the wallet as auto-created on first acquisition (matching the spec). Sell on a missing wallet returns 400 `INSUFFICIENT_WALLET_STOCK` - the same code as sell on an empty holding. There is no meaningful "first sale" without prior state, so the symmetry with buy is intentionally broken.
 - **`POST /chaos` triggers the same shutdown path as SIGTERM.** The handler returns 202 immediately, then a goroutine sleeps 100 ms (so the response leaves the socket) and calls the cancel function returned by `signal.NotifyContext`. The main goroutine's `<-ctx.Done()` branch runs `httpSrv.Shutdown` exactly as it would on SIGTERM - one shutdown code path, exercised two ways.
@@ -180,6 +181,20 @@ All three suites run in CI; e2e is gated on integration passing.
 - **Mixed buy/sell preserves the total.** The bank holds 100 of one symbol and a preloaded wallet holds another 100 of the same symbol. 100 concurrent buys (each into a fresh wallet) and 100 concurrent sells (all from the preloaded wallet) run interleaved. After the dust settles, `bank.quantity + sum(wallet_stocks.quantity)` must equal 200 - no stock created, none destroyed - and the audit log row count must equal the number of successful operations, broken down correctly between BUY and SELL.
 
 These two tests are the closest we get to proving the FinTech contract: stock cannot evaporate, cannot multiply, and the audit log mirrors reality exactly.
+
+## What's Not Implemented (Next Steps)
+
+A few things were left out deliberately because they would either inflate the scope past the recruitment task or duplicate work that production infrastructure normally owns.
+
+**Postgres high availability.** The application runs N replicas behind Caddy, but every one of them talks to a single Postgres container. A real production deployment would replace this with a managed primary/standby (RDS, Cloud SQL, Supabase) or a self-hosted streaming-replication setup behind a connection router. The application code does not need to change for that swap; only the connection string does. The reasoning lives in [ADR 0001](docs/adr/0001-ha-via-shared-db.md).
+
+**Authentication and authorization.** All endpoints are open. Bank operations (`POST /stocks`, `POST /chaos`) need at minimum an admin scope, and per-wallet operations need either ownership-based authorization or a service-to-service token. The handler signature already pulls the wallet ID from the path, so a middleware that asserts `X-Wallet-Id == path wallet_id` (or its OAuth equivalent) would slot in without touching service code.
+
+**Rate limiting and quotas.** A misbehaving client can drain the bank by spamming `POST /wallets/.../stocks/...` in a tight loop. The simplest production-grade fix is a per-client token bucket at the Caddy layer (`caddy-ratelimit` plugin) or an upstream API gateway. The audit log makes after-the-fact detection trivial; it does not prevent the abuse.
+
+**Pagination for `GET /log`.** The spec caps the audit log at 10 000 entries, so the current "return everything" implementation stays under a few megabytes of JSON. Lifting the cap means adding `?limit=` and `?after_id=` parameters and an index on `audit_log(id)` (currently only the implicit primary key). The same-transaction guarantee in [ADR 0005](docs/adr/0005-audit-log-in-transaction.md) is unaffected by pagination.
+
+**Observability.** Logs are JSON via `slog` and go to stdout, where compose surfaces them with `make compose-logs`. There is no `/metrics` endpoint and no OpenTelemetry tracing. For a real deployment the obvious next steps are a Prometheus client (`prometheus/client_golang` exposed under `/metrics`) and an OTel SDK wired through the request handler so traces follow buy/sell across the storage layer.
 
 ## License
 
