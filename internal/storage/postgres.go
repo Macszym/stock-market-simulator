@@ -74,10 +74,6 @@ func (p *Postgres) SetBankStocks(ctx context.Context, stocks []domain.Stock) err
 
 // BuyStock moves one unit of stockName from the bank into walletID's holdings
 // and writes a BUY entry to the audit log, all in a single transaction.
-//
-// The audit insert lives inside the same transaction as the state mutation:
-// either both persist or neither does. This is the load-bearing guarantee
-// that lets the audit log be trusted as a record of what actually happened.
 func (p *Postgres) BuyStock(ctx context.Context, walletID, stockName string) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -126,11 +122,8 @@ func (p *Postgres) BuyStock(ctx context.Context, walletID, stockName string) err
 		return fmt.Errorf("upsert wallet_stocks %q/%q: %w", walletID, stockName, err)
 	}
 
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO audit_log (operation, wallet_id, stock_name) VALUES ('BUY', $1, $2)`,
-		walletID, stockName,
-	); err != nil {
-		return fmt.Errorf("insert audit_log: %w", err)
+	if err := p.auditOp(ctx, tx, domain.OperationBuy, walletID, stockName); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -141,10 +134,6 @@ func (p *Postgres) BuyStock(ctx context.Context, walletID, stockName string) err
 
 // SellStock returns one unit of stockName from walletID's holdings back to the
 // bank and writes a SELL entry to the audit log, all in a single transaction.
-//
-// The audit insert lives inside the same transaction as the state mutation:
-// either both persist or neither does. This is the load-bearing guarantee
-// that lets the audit log be trusted as a record of what actually happened.
 func (p *Postgres) SellStock(ctx context.Context, walletID, stockName string) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -186,11 +175,8 @@ func (p *Postgres) SellStock(ctx context.Context, walletID, stockName string) er
 		return fmt.Errorf("increment bank_stocks %q: %w", stockName, err)
 	}
 
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO audit_log (operation, wallet_id, stock_name) VALUES ('SELL', $1, $2)`,
-		walletID, stockName,
-	); err != nil {
-		return fmt.Errorf("insert audit_log: %w", err)
+	if err := p.auditOp(ctx, tx, domain.OperationSell, walletID, stockName); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -276,6 +262,20 @@ func (p *Postgres) GetAuditLog(ctx context.Context) ([]domain.AuditEntry, error)
 		return nil, fmt.Errorf("iter audit_log: %w", err)
 	}
 	return entries, nil
+}
+
+// auditOp inserts a row into audit_log inside the caller's transaction. Both
+// BuyStock and SellStock call it before Commit so the audit row and the
+// state mutation either both persist or both roll back. ADR 0005 covers the
+// rationale for keeping audit and state in one transaction.
+func (p *Postgres) auditOp(ctx context.Context, tx pgx.Tx, op domain.OperationType, walletID, stockName string) error {
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO audit_log (operation, wallet_id, stock_name) VALUES ($1, $2, $3)`,
+		op, walletID, stockName,
+	); err != nil {
+		return fmt.Errorf("insert audit_log: %w", err)
+	}
+	return nil
 }
 
 func (p *Postgres) walletExists(ctx context.Context, id string) (bool, error) {
