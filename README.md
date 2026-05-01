@@ -173,6 +173,8 @@ Two loops:
 
 All three suites run in CI; e2e is gated on integration passing.
 
+Verified on macOS (developer host) and on Linux via the ubuntu-latest CI runners. Windows users run the same compose stack through Git Bash or WSL2; that path was not separately exercised.
+
 ### Concurrency tests
 
 `tests/integration/concurrency_test.go` runs two scenarios under the `-race` detector:

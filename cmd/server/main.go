@@ -47,7 +47,7 @@ func run() error {
 		return fmt.Errorf("parse db dsn: %w", err)
 	}
 	// MaxConns=10 leaves headroom against postgres default max_connections=100
-	// (2 HA instances * 10 + admin/migrations/tests). MinConns=2 keeps warm
+	// (N replicas * 10 + admin/migrations/tests). MinConns=2 keeps warm
 	// connections so the first request after startup does not pay auth latency.
 	poolCfg.MinConns = 2
 	poolCfg.MaxConns = 10
