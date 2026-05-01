@@ -33,7 +33,7 @@ services:
       postgres:
         condition: service_healthy
     deploy:
-      replicas: ${APP_REPLICAS:-2}
+      replicas: ${APP_REPLICAS:-3}
     restart: unless-stopped
 
   caddy:
