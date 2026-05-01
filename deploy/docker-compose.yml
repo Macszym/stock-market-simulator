@@ -17,7 +17,7 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  app1:
+  app:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -29,11 +29,21 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-stocksim}
       DB_NAME: ${POSTGRES_DB:-stocksim}
       DB_SSLMODE: disable
-    ports:
-      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+    deploy:
+      replicas: ${APP_REPLICAS:-2}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - app
     restart: unless-stopped
 
 volumes:

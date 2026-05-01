@@ -1,0 +1,27 @@
+# Reverse proxy and load balancer for the stock-market-simulator API.
+#
+# DNS-based service discovery: Caddy queries the Docker DNS resolver
+# every 5s for A-records of "app", which round-robin across replicas.
+# /chaos can kill a replica and Docker can spawn a new one without
+# restarting Caddy.
+#
+# Active health checks (health_uri) are intentionally omitted: Caddy
+# disables them when dynamic upstreams are configured. We rely on
+# passive health checks (fail_duration + max_fails) and the short DNS
+# refresh window.
+# See: https://caddyserver.com/docs/caddyfile/directives/reverse_proxy
+:8080 {
+	reverse_proxy {
+		dynamic a app 8080 {
+			refresh 5s
+		}
+
+		lb_policy round_robin
+		lb_try_duration 5s
+		lb_try_interval 250ms
+
+		fail_duration 10s
+		max_fails 1
+		unhealthy_status 5xx
+	}
+}
