@@ -10,6 +10,13 @@ REST API simulating a simplified stock exchange with a single bank as the sole l
 ./scripts/run.sh
 ```
 
+By default this launches Caddy + 3 app replicas + Postgres. To override the host port or replica count:
+
+```bash
+./scripts/run.sh 9090        # 3 replicas on :9090
+./scripts/run.sh 9090 5      # 5 replicas on :9090
+```
+
 In another terminal:
 
 ```bash
@@ -19,11 +26,22 @@ curl -X POST http://localhost:8080/stocks \
 curl http://localhost:8080/stocks
 ```
 
-Requires Docker with Compose v2 (Docker Desktop 4.30+ or equivalent).
+Requires Docker with Compose v2 (Docker Desktop 4.30+ or equivalent). On Windows, run the shell scripts from Git Bash or WSL2.
 
 ## Architecture
 
-Layered with explicit boundaries:
+```mermaid
+graph LR
+    Client --> Caddy[Caddy<br/>load balancer]
+    Caddy --> A1[app replica 1]
+    Caddy --> A2[app replica 2]
+    Caddy --> AN[app replica N]
+    A1 --> DB[(Postgres)]
+    A2 --> DB
+    AN --> DB
+```
+
+The Go API itself is layered with explicit boundaries:
 
 - `internal/domain` - pure data types (`Stock`, `Wallet`, `AuditEntry`, `OperationType`) and sentinel errors. No IO, no DB, no HTTP.
 - `internal/storage` - Postgres-backed persistence (`Postgres` struct with pgxpool). Maps DB-specific concerns (`pgx.ErrNoRows`, transactions) to domain errors.
@@ -31,6 +49,19 @@ Layered with explicit boundaries:
 - `internal/api` - HTTP layer. Owns wire shapes (envelope DTOs that diverge from domain), error mapping, and route registration via Go 1.22+ pattern matching.
 - `cmd/server` - composition root. Wires `storage → service → api`, runs goose migrations on startup, handles graceful shutdown.
 - `migrations` - embedded SQL files (`//go:embed *.sql`); shipped inside the binary, applied at startup.
+
+## High Availability
+
+The compose stack runs N app replicas (default 3) behind Caddy as a reverse proxy and load balancer. The replica count is parametrised via `APP_REPLICAS` and the host port via `PORT`; only Caddy publishes a port to the host.
+
+Caddy uses DNS-based service discovery: it queries the Docker DNS resolver every 5 seconds for A-records of the `app` service, which Compose returns once per running replica. When `POST /chaos` kills a replica:
+
+1. Docker's `restart: unless-stopped` policy re-spawns the container.
+2. Caddy's passive health check (`fail_duration 10s`, `max_fails 1`) parks the dead replica after the first failed request.
+3. `lb_try_duration 5s` retries the failed upstream attempt within the same client request, so the failover is invisible to the client.
+4. The DNS refresh window picks up the restarted replica without reloading Caddy.
+
+Postgres is intentionally **not** replicated. Real database HA (streaming replication, failover orchestration, split-brain resolution) is well beyond the scope of this recruitment task; the rationale is in [ADR 0001](docs/adr/0001-ha-via-shared-db.md), and the LB design is in [ADR 0002](docs/adr/0002-caddy-dns-discovery.md).
 
 ## API
 
@@ -108,19 +139,25 @@ All error responses share the same shape: `{"error":"human message","code":"STAB
 - **Atomic decrement uses `UPDATE ... WHERE quantity > 0`, not `SELECT ... FOR UPDATE` followed by application-level checks.** The conditional update is atomic at the SQL level; zero rows affected means depletion. A `SELECT FOR UPDATE` is still issued first, but only to distinguish "stock unknown to the bank" (404) from "stock exists but is depleted" (400). Read-Committed isolation is sufficient because the per-row lock and conditional update together prevent lost updates without forcing the retry loops a `Serializable` level would require.
 - **Sell never auto-creates a wallet.** Buy treats the wallet as auto-created on first acquisition (matching the spec). Sell on a missing wallet returns 400 `INSUFFICIENT_WALLET_STOCK` - the same code as sell on an empty holding. There is no meaningful "first sale" without prior state, so the symmetry with buy is intentionally broken.
 - **`POST /chaos` triggers the same shutdown path as SIGTERM.** The handler returns 202 immediately, then a goroutine sleeps 100 ms (so the response leaves the socket) and calls the cancel function returned by `signal.NotifyContext`. The main goroutine's `<-ctx.Done()` branch runs `httpSrv.Shutdown` exactly as it would on SIGTERM - one shutdown code path, exercised two ways.
+- **Caddy as the load balancer, not nginx or Traefik.** Caddy's Caddyfile is dense enough to express the whole LB config (dynamic upstreams, round-robin, retry window, passive health) in 12 lines, with no template engine and no startup script. nginx would require a config template rendered at boot and a manual reload on rescale; Traefik is heavier than the requirements warrant. Caddy v2 is also one of the few mainstream proxies whose Caddyfile directly supports DNS-based dynamic upstreams without a plugin.
+- **DNS-based service discovery instead of statically named replicas.** Static names (`app1`, `app2`, ...) require `container_name` per replica, which Compose forbids together with `deploy.replicas`. Resolving the `app` service name via Docker's embedded DNS gives one A-record per live replica; Caddy re-queries every 5 seconds, so scale-up and post-chaos restarts need no Caddy reload. Trade-off: Caddy disables active health checks under dynamic upstreams, so resilience leans on passive health (`fail_duration`) plus per-request retry (`lb_try_duration`). See [ADR 0002](docs/adr/0002-caddy-dns-discovery.md).
+- **No HA for Postgres.** The same DB is reachable from every app replica, which keeps the audit-log invariant trivially correct (every successful buy/sell still commits in one transaction with its audit row, regardless of which replica handled the call) but leaves Postgres as a single point of failure. Treating real DB HA seriously means streaming replication, a cluster manager, and a connection router - all out of scope here. See [ADR 0001](docs/adr/0001-ha-via-shared-db.md).
 
 ## Development
 
 ```bash
-make                  # show all targets
-make run              # run server locally without Docker
-make build            # build static binary into bin/server
-make lint             # run golangci-lint
-make test             # unit tests with race detector
-make test-integration # integration tests against Postgres in testcontainers
-make compose-up       # full stack (Postgres + app)
+make                    # show all targets
+make run                # run server locally without Docker
+make build              # build static binary into bin/server
+make lint               # run golangci-lint
+make test               # unit tests with race detector
+make test-integration   # integration tests against Postgres in testcontainers
+make test-e2e           # end-to-end chaos resilience test (needs Docker, curl, jq)
+make compose-up         # full stack (Caddy + N app replicas + Postgres)
 make compose-down
-make db-shell         # psql against the running compose Postgres
+make compose-logs       # tail logs from the running stack
+make scale REPLICAS=5   # scale app to 5 replicas (default 3)
+make db-shell           # psql against the running compose Postgres
 ```
 
 Go 1.26+ for local builds. Docker required for the compose stack and integration tests.
@@ -131,8 +168,9 @@ Two loops:
 
 - **Unit tests** (`make test`) - service layer with an in-memory fake repository; finishes in milliseconds. Run on every commit.
 - **Integration tests** (`make test-integration`) - repository against a real Postgres 18.3 launched by testcontainers-go, schema applied via the same embedded goose migrations the binary uses. Container start is the bulk of the time (~7s cold, ~1s warm); each test uses `TRUNCATE ... RESTART IDENTITY CASCADE` for a deterministic state without paying container startup between tests.
+- **End-to-end chaos test** (`make test-e2e`) - `tests/e2e/chaos_test.sh` brings up the full HA stack via `docker compose`, places 50 buys, fires `POST /chaos`, places another 50 buys after the killed replica is gone, and asserts the audit log carries all 100 entries while the bank is fully drained. Requires Docker, `curl` and `jq`.
 
-Both suites run in CI as parallel jobs.
+All three suites run in CI; e2e is gated on integration passing.
 
 ### Concurrency tests
 
