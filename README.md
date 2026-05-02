@@ -20,9 +20,10 @@ Windows (cmd or PowerShell):
 scripts\run.bat
 ```
 
-By default this launches Caddy + 3 app replicas + Postgres. To override the host port or replica count, pass them positionally (same contract on both scripts):
+By default this launches Caddy + 3 app replicas + Postgres on :8080. The host port and replica count are positional arguments (same contract on both scripts):
 
 ```bash
+./scripts/run.sh             # 3 replicas on :8080 (default)
 ./scripts/run.sh 9090        # 3 replicas on :9090
 ./scripts/run.sh 9090 5      # 5 replicas on :9090
 ```
