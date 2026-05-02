@@ -6,6 +6,8 @@ REST API simulating a simplified stock exchange with a single bank as the sole l
 
 ## Quick Start
 
+Rendered API reference: <https://macszym.github.io/stock-market-simulator/>.
+
 Linux / macOS:
 
 ```bash
@@ -73,7 +75,7 @@ Postgres is intentionally **not** replicated. Real database HA (streaming replic
 
 ## API
 
-All endpoints accept and return JSON. Wallet IDs and stock names are arbitrary strings. The full OpenAPI 3.1 spec is in [`docs/openapi.yaml`](docs/openapi.yaml).
+All endpoints accept and return JSON. Wallet IDs and stock names are arbitrary strings. The full OpenAPI 3.1 spec is in [`docs/openapi.yaml`](docs/openapi.yaml), or rendered as Swagger UI at <https://macszym.github.io/stock-market-simulator/>.
 
 | Method | Path | Notes |
 |---|---|---|
