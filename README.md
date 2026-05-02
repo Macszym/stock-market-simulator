@@ -184,7 +184,7 @@ Two loops:
 
 All three suites run in CI; e2e is gated on integration passing.
 
-Verified on macOS (developer host) and on Linux via the ubuntu-latest CI runners. Windows users run the same compose stack via `scripts\run.bat`; that path was not separately exercised on a Windows host.
+Verified on macOS (developer host), on Linux via the ubuntu-latest CI runners, and on Windows via the windows-latest CI runner (build, unit tests, and `scripts\run.bat` smoke check). The compose stack itself runs Linux containers; Windows users orchestrate it through Docker Desktop.
 
 ### Concurrency tests
 
