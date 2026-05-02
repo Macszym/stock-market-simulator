@@ -6,11 +6,19 @@ REST API simulating a simplified stock exchange with a single bank as the sole l
 
 ## Quick Start
 
+Linux / macOS:
+
 ```bash
 ./scripts/run.sh
 ```
 
-By default this launches Caddy + 3 app replicas + Postgres. To override the host port or replica count:
+Windows (cmd or PowerShell):
+
+```bat
+scripts\run.bat
+```
+
+By default this launches Caddy + 3 app replicas + Postgres. To override the host port or replica count, pass them positionally (same contract on both scripts):
 
 ```bash
 ./scripts/run.sh 9090        # 3 replicas on :9090
@@ -26,7 +34,7 @@ curl -X POST http://localhost:8080/stocks \
 curl http://localhost:8080/stocks
 ```
 
-Requires Docker with Compose v2 (Docker Desktop 4.30+ or equivalent). On Windows, run the shell scripts from Git Bash or WSL2.
+Requires Docker with Compose v2 (Docker Desktop 4.30+ or equivalent). No additional runtime, build tooling, or third-party shell (Git Bash, WSL2) is needed on the host.
 
 ## Architecture
 
@@ -171,7 +179,7 @@ Two loops:
 
 All three suites run in CI; e2e is gated on integration passing.
 
-Verified on macOS (developer host) and on Linux via the ubuntu-latest CI runners. Windows users run the same compose stack through Git Bash or WSL2; that path was not separately exercised.
+Verified on macOS (developer host) and on Linux via the ubuntu-latest CI runners. Windows users run the same compose stack via `scripts\run.bat`; that path was not separately exercised on a Windows host.
 
 ### Concurrency tests
 
