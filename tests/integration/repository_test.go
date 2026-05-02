@@ -273,3 +273,53 @@ func TestPostgres_SellStock_AutoCreatesWalletOnMissing(t *testing.T) {
 		`SELECT COUNT(*) FROM audit_log`).Scan(&auditCount))
 	require.Equal(t, int64(0), auditCount, "failed sell must not write an audit row")
 }
+
+func TestPostgres_BuyStock_AutoCreatesWalletOnMissingStock(t *testing.T) {
+	cleanDB(t)
+	repo := storage.NewPostgres(pool)
+	ctx := context.Background()
+
+	err := repo.BuyStock(ctx, "newwallet", "UNKNOWN")
+	require.ErrorIs(t, err, domain.ErrStockNotFound)
+
+	var exists bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM wallets WHERE id = $1)`, "newwallet").Scan(&exists))
+	require.True(t, exists, "missing wallet must be auto-created on buy, even when the stock is unknown")
+
+	var holdingCount int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM wallet_stocks WHERE wallet_id = 'newwallet'`).Scan(&holdingCount))
+	require.Equal(t, int64(0), holdingCount, "auto-created wallet has no holdings on failed buy")
+
+	var auditCount int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_log`).Scan(&auditCount))
+	require.Equal(t, int64(0), auditCount, "failed buy must not write an audit row")
+}
+
+func TestPostgres_BuyStock_AutoCreatesWalletOnDepletedBank(t *testing.T) {
+	cleanDB(t)
+	repo := storage.NewPostgres(pool)
+	ctx := context.Background()
+
+	require.NoError(t, repo.SetBankStocks(ctx, []domain.Stock{{Name: "AAPL", Quantity: 0}}))
+
+	err := repo.BuyStock(ctx, "newwallet", "AAPL")
+	require.ErrorIs(t, err, domain.ErrInsufficientBankStock)
+
+	var exists bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM wallets WHERE id = $1)`, "newwallet").Scan(&exists))
+	require.True(t, exists, "missing wallet must be auto-created on buy, even when the bank is depleted")
+
+	var bankQty int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT quantity FROM bank_stocks WHERE name = 'AAPL'`).Scan(&bankQty))
+	require.Equal(t, int64(0), bankQty, "bank quantity must be unchanged on failed buy")
+
+	var auditCount int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_log`).Scan(&auditCount))
+	require.Equal(t, int64(0), auditCount, "failed buy must not write an audit row")
+}

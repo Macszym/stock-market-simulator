@@ -74,7 +74,16 @@ func (p *Postgres) SetBankStocks(ctx context.Context, stocks []domain.Stock) err
 
 // BuyStock moves one unit of stockName from the bank into walletID's holdings
 // and writes a BUY entry to the audit log, all in a single transaction.
+// The wallet is auto-created up-front and persists even if the buy itself
+// fails, so the wallet creation is not undone by the transaction rollback.
 func (p *Postgres) BuyStock(ctx context.Context, walletID, stockName string) error {
+	if _, err := p.pool.Exec(ctx,
+		`INSERT INTO wallets (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
+		walletID,
+	); err != nil {
+		return fmt.Errorf("upsert wallet %q: %w", walletID, err)
+	}
+
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -105,13 +114,6 @@ func (p *Postgres) BuyStock(ctx context.Context, walletID, stockName string) err
 	}
 	if ct.RowsAffected() == 0 {
 		return domain.ErrInsufficientBankStock
-	}
-
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO wallets (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
-		walletID,
-	); err != nil {
-		return fmt.Errorf("upsert wallet %q: %w", walletID, err)
 	}
 
 	if _, err := tx.Exec(ctx,

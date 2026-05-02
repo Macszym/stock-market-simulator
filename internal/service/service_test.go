@@ -70,6 +70,9 @@ func (f *fakeRepo) GetAuditLog(_ context.Context) ([]domain.AuditEntry, error) {
 }
 
 func (f *fakeRepo) BuyStock(_ context.Context, walletID, stockName string) error {
+	if _, ok := f.wallets[walletID]; !ok {
+		f.wallets[walletID] = map[string]int64{}
+	}
 	qty, ok := f.bank[stockName]
 	if !ok {
 		return domain.ErrStockNotFound
@@ -78,9 +81,6 @@ func (f *fakeRepo) BuyStock(_ context.Context, walletID, stockName string) error
 		return domain.ErrInsufficientBankStock
 	}
 	f.bank[stockName] = qty - 1
-	if _, ok := f.wallets[walletID]; !ok {
-		f.wallets[walletID] = map[string]int64{}
-	}
 	f.wallets[walletID][stockName]++
 	f.auditLog = append(f.auditLog, domain.AuditEntry{
 		Operation: domain.OperationBuy,
@@ -289,7 +289,8 @@ func TestService_BuyStock_StockNotFound(t *testing.T) {
 
 	err := svc.BuyStock(context.Background(), "w1", "AAPL")
 	require.ErrorIs(t, err, domain.ErrStockNotFound)
-	require.Empty(t, repo.wallets, "wallet must not be created on failure")
+	require.Contains(t, repo.wallets, "w1", "wallet must be auto-created up-front, even on failure")
+	require.Empty(t, repo.wallets["w1"], "wallet has no holdings on failed buy")
 	require.Empty(t, repo.auditLog, "no audit entry on failure")
 }
 
@@ -301,7 +302,8 @@ func TestService_BuyStock_InsufficientBankStock(t *testing.T) {
 	err := svc.BuyStock(context.Background(), "w1", "AAPL")
 	require.ErrorIs(t, err, domain.ErrInsufficientBankStock)
 	require.Equal(t, int64(0), repo.bank["AAPL"])
-	require.Empty(t, repo.wallets)
+	require.Contains(t, repo.wallets, "w1", "wallet must be auto-created up-front, even on failure")
+	require.Empty(t, repo.wallets["w1"], "wallet has no holdings on failed buy")
 	require.Empty(t, repo.auditLog)
 }
 

@@ -22,10 +22,14 @@ Postgres holds bank state, wallet state, and the audit log in one database (see 
 Both `BuyStock` and `SellStock` in `internal/storage/postgres.go` open a transaction with `pool.Begin`, perform every required mutation, and commit at the end. The audit insert sits inside that transaction, before `Commit`. Buy in SQL terms:
 
 ```sql
+-- Wallet creation lives outside the transaction so that hitting an unknown
+-- stock (404) or a depleted bank (400) still leaves the wallet behind, per
+-- the spec's "if the wallet doesn't exist this operation should create it".
+INSERT INTO wallets (id) VALUES ($2) ON CONFLICT (id) DO NOTHING;
+
 BEGIN;
   SELECT quantity FROM bank_stocks WHERE name = $1 FOR UPDATE;             -- 404 vs 400 split
   UPDATE bank_stocks  SET quantity = quantity - 1 WHERE name = $1 AND quantity > 0;
-  INSERT INTO wallets (id) VALUES ($2) ON CONFLICT (id) DO NOTHING;
   INSERT INTO wallet_stocks (wallet_id, stock_name, quantity) VALUES ($2, $1, 1)
     ON CONFLICT (wallet_id, stock_name) DO UPDATE SET quantity = wallet_stocks.quantity + 1;
   INSERT INTO audit_log (operation, wallet_id, stock_name) VALUES ('BUY', $2, $1);
@@ -34,7 +38,7 @@ COMMIT;
 
 There is no "publish to audit afterwards" step. A `defer tx.Rollback(ctx)` covers any error path before the explicit `Commit`; rollback after a successful commit is a no-op in pgx, which keeps the defer safe rather than conditional.
 
-Both functions acquire locks in the same order: the bank row first (via `SELECT ... FOR UPDATE`), the wallet row second. Two concurrent buys on the same stock serialise on the bank row; a buy and a sell on the same stock take the same path. The classical deadlock setup (transaction A holding lock X waiting for lock Y while transaction B holds Y waiting for X) cannot arise.
+Both functions acquire locks in the same order: the `bank_stocks` row first (via `SELECT ... FOR UPDATE`), the `wallet_stocks` row second. Two concurrent buys on the same stock serialise on the bank row; a buy and a sell on the same stock take the same path. The classical deadlock setup (transaction A holding lock X waiting for lock Y while transaction B holds Y waiting for X) cannot arise.
 
 The default Postgres isolation level (Read Committed) is sufficient. The atomic decrement uses `UPDATE ... WHERE quantity > 0`, which is a conditional update at the SQL level; combined with the per-row `SELECT ... FOR UPDATE` issued only to distinguish "stock unknown" (404) from "stock depleted" (400), it eliminates lost updates without forcing the retry loops that `Serializable` would require on serialisation failure.
 

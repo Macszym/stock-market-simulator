@@ -124,6 +124,9 @@ func (f *fakeService) BuyStock(_ context.Context, walletID, stockName string) er
 	if f.buyErr != nil {
 		return f.buyErr
 	}
+	if _, ok := f.wallets[walletID]; !ok {
+		f.wallets[walletID] = map[string]int64{}
+	}
 	qty, ok := f.bank[stockName]
 	if !ok {
 		return domain.ErrStockNotFound
@@ -132,9 +135,6 @@ func (f *fakeService) BuyStock(_ context.Context, walletID, stockName string) er
 		return domain.ErrInsufficientBankStock
 	}
 	f.bank[stockName] = qty - 1
-	if _, ok := f.wallets[walletID]; !ok {
-		f.wallets[walletID] = map[string]int64{}
-	}
 	f.wallets[walletID][stockName]++
 	f.auditLog = append(f.auditLog, domain.AuditEntry{
 		Operation: domain.OperationBuy, WalletID: walletID, StockName: stockName,

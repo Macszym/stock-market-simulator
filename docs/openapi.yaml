@@ -120,7 +120,8 @@ paths:
       description: |
         One unit moves between the bank and the wallet, with the audit row
         written in the same database transaction. The wallet is created on
-        first buy; sell on a missing wallet returns 400, not 404.
+        the first buy or sell and persists even when the operation itself
+        fails.
       operationId: buyOrSell
       parameters:
         - $ref: '#/components/parameters/WalletId'
