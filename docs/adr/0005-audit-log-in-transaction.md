@@ -40,7 +40,7 @@ The default Postgres isolation level (Read Committed) is sufficient. The atomic 
 
 ## Consequences
 
-- The audit log is a load-bearing trust artefact. `count(audit_log)` equals the number of successful buy/sell calls; this is verified directly under contention by `tests/integration/concurrency_test.go` (100 concurrent buys against a bank of 50 must produce exactly 50 audit rows) and end-to-end by `tests/e2e/chaos_test.sh`.
+- The audit log is the trusted record of successful operations. `count(audit_log)` equals the number of successful buy/sell calls; this is verified directly under contention by `tests/integration/concurrency_test.go` (100 concurrent buys against a bank of 50 must produce exactly 50 audit rows) and end-to-end by `tests/e2e/chaos_test.sh`.
 - Transactional latency includes the audit insert, so `audit_log` is on the hot path. At the throughput this task targets the cost is invisible; at higher throughput the table would need an index review (currently only the implicit primary key) and possibly a partition scheme on `id`.
 - A future requirement to forward audit events to an external system (Kafka, S3, an event bus) cannot piggy-back on the same `Begin/Commit`. The standard answer is the transactional outbox pattern: write the outbox row inside the same transaction as the state change, ship it asynchronously, keep the in-database invariant intact.
 - The spec cap of 10 000 entries means there is no urgency on archival or pagination; `GET /log` returns the full table. If the cap is lifted, the same-transaction guarantee is unaffected, but the read endpoint will need pagination and the table will need explicit indexing on `(wallet_id)` and probably `(stock_name)`.
