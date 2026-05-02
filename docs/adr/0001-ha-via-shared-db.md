@@ -16,7 +16,7 @@ The cleanest answer at the architecture level would be: replicate everything tha
 
 Run N stateless app replicas (default 3) behind Caddy, all pointing at a single Postgres instance. The number of replicas is parametrised by `APP_REPLICAS` and the host port by `PORT`, both consumed by `deploy/docker-compose.yml` and the `scripts/run.sh` entry point.
 
-`POST /chaos` exits one replica gracefully (same code path as SIGTERM); Docker's `restart: unless-stopped` policy resurrects it; Caddy keeps serving requests off the surviving replicas in the meantime. The audit log invariant survives because every successful buy/sell already commits inside one Postgres transaction together with the audit row, regardless of which replica handled the call.
+`POST /chaos` writes a 202 so the load balancer treats the request as served (any HTTP status disables Caddy's `lb_try_duration` retry, preventing the kill from cascading to a sibling replica), then exits the process via `os.Exit(1)` after a short delay so the response leaves the socket. Docker's `restart: unless-stopped` policy resurrects the container; Caddy keeps serving requests off the surviving replicas in the meantime. The audit log invariant survives because every successful buy/sell already commits inside one Postgres transaction together with the audit row, regardless of which replica handled the call.
 
 ## Consequences
 
@@ -24,3 +24,4 @@ Run N stateless app replicas (default 3) behind Caddy, all pointing at a single 
 - App-layer scaling is trivial: `APP_REPLICAS=N docker compose up -d` adds replicas live, Caddy picks them up via DNS service discovery within 5 seconds (see ADR 0002).
 - Migrations are run by every replica on startup. Goose tracks the schema version in a table and skips already-applied migrations, so a race between replicas resolves to one applying the change and the rest moving on.
 - A real production deployment would replace this with a managed Postgres (RDS, Cloud SQL, Supabase) plus a connection pooler. The application code does not need to change for that swap; only the connection string and the lifecycle of the DB container change.
+- `/chaos` and SIGTERM use deliberately separate shutdown paths. SIGTERM is the operator-initiated graceful path (`httpSrv.Shutdown` drains in-flight requests, defers run, exit 0). `/chaos` is the chaos-test-initiated abrupt path (`os.Exit(1)`, no drain, defers skipped, exit 1). A single shared path was considered but conflated the two intents and would have masked the LB failover behaviour the chaos test is meant to exercise.

@@ -30,9 +30,9 @@ type Server struct {
 }
 
 // NewServer wires HTTP routes to service operations. The chaos function is
-// invoked by POST /chaos to trigger the instance shutdown; in production it is
-// the cancel returned by signal.NotifyContext so the kill path is identical to
-// receiving SIGTERM.
+// invoked by POST /chaos to abruptly terminate this instance; in production
+// it is os.Exit(1) wrapped in a closure that logs the event first. The
+// indirection keeps tests free of process-killing side effects.
 func NewServer(svc ServiceAPI, logger *slog.Logger, chaos func()) *Server {
 	s := &Server{
 		svc:    svc,

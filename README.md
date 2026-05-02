@@ -86,7 +86,7 @@ All endpoints accept and return JSON. Wallet IDs and stock names are arbitrary s
 | `GET`  | `/wallets/{wallet_id}/stocks/{stock_name}` | Returns a bare JSON number (e.g. `99`); 0 if the wallet has no holding for that stock |
 | `GET`  | `/log` | Returns `{"log":[{"type":"buy","wallet_id":"...","stock_name":"..."}]}`, ordered by occurrence |
 | `POST` | `/wallets/{wallet_id}/stocks/{stock_name}` | Body `{"type":"buy"\|"sell"}`. One unit moves between bank and wallet, audit log entry written in the same DB transaction. Auto-creates the wallet on first buy or sell, even if the operation itself fails. Returns 200 with empty body on success |
-| `POST` | `/chaos` | Returns 202 with `{"message":"shutting down"}` and triggers graceful self-shutdown - same code path as SIGTERM. Used to exercise HA failover |
+| `POST` | `/chaos` | Returns 202 with `{"message":"shutting down"}`, then `os.Exit(1)` after the response leaves the socket. Cuts in-flight requests on this instance; used to exercise HA failover |
 
 ### Example
 
@@ -112,7 +112,7 @@ curl -X POST http://localhost:8080/wallets/w1/stocks/AAPL -d '{"type":"sell"}'
 curl http://localhost:8080/log
 # {"log":[{"type":"buy","wallet_id":"w1","stock_name":"AAPL"},{"type":"sell","wallet_id":"w1","stock_name":"AAPL"}]}
 
-# Trigger a chaos shutdown (instance restarts under compose's restart policy)
+# Trigger a chaos kill (instance exits 1, then restarts under compose's restart policy)
 curl -X POST http://localhost:8080/chaos
 # HTTP/1.1 202 Accepted
 # {"message":"shutting down"}
@@ -147,7 +147,7 @@ All error responses share the same shape: `{"error":"human message","code":"STAB
 - **`GET /wallets/{id}/stocks/{name}` returns 404 for a missing wallet, matching `GET /wallets/{id}`.** The spec specifies the success case as "returns a single number" but does not say what to do for an unknown wallet; mirroring the parent endpoint keeps both reads consistent.
 - **Buy/sell and the audit log share one transaction.** The state mutation (UPDATE on `bank_stocks` + UPSERT on `wallet_stocks`) and the `INSERT` into `audit_log` live inside one `pool.Begin`/`Commit`. Either the operation and the audit row both persist, or neither does, so the audit log reflects exactly the set of successful operations. See [ADR 0005](docs/adr/0005-audit-log-in-transaction.md).
 - **Atomic decrement uses `UPDATE ... WHERE quantity > 0`, not `SELECT ... FOR UPDATE` followed by application-level checks.** The conditional update is atomic at the SQL level; zero rows affected means depletion. A `SELECT FOR UPDATE` is still issued first, but only to distinguish "stock unknown to the bank" (404) from "stock exists but is depleted" (400). Read-Committed isolation is sufficient because the per-row lock and conditional update together prevent lost updates without forcing the retry loops a `Serializable` level would require.
-- **`POST /chaos` triggers the same shutdown path as SIGTERM.** The handler returns 202 immediately, then a goroutine sleeps 100 ms (so the response leaves the socket) and calls the cancel function returned by `signal.NotifyContext`. The main goroutine's `<-ctx.Done()` branch runs `httpSrv.Shutdown` exactly as it would on SIGTERM - one shutdown code path, exercised two ways.
+- **`POST /chaos` and SIGTERM are deliberately separate paths.** SIGTERM (operator-initiated) routes through `httpSrv.Shutdown` - graceful drain, defers run, exit 0. `/chaos` (chaos-test-initiated) writes 202, sleeps 100 ms so the response leaves the socket, then calls `os.Exit(1)` - no drain, defers skipped, exit 1. Two intents, two implementations. The 202 is required: any HTTP status disables Caddy's `lb_try_duration` retry, so only one replica dies per call instead of cascading across the cluster.
 - **Caddy as the load balancer, not nginx or Traefik.** Caddy's Caddyfile is dense enough to express the whole LB config (dynamic upstreams, round-robin, retry window, passive health) in 12 lines, with no template engine and no startup script. nginx would require a config template rendered at boot and a manual reload on rescale; Traefik is heavier than the requirements warrant. Caddy v2 is also one of the few mainstream proxies whose Caddyfile directly supports DNS-based dynamic upstreams without a plugin.
 - **DNS-based service discovery instead of statically named replicas.** Static names (`app1`, `app2`, ...) require `container_name` per replica, which Compose forbids together with `deploy.replicas`. Resolving the `app` service name via Docker's embedded DNS gives one A-record per live replica; Caddy re-queries every 5 seconds, so scale-up and post-chaos restarts need no Caddy reload. Trade-off: Caddy disables active health checks under dynamic upstreams, so resilience leans on passive health (`fail_duration`) plus per-request retry (`lb_try_duration`). See [ADR 0002](docs/adr/0002-caddy-dns-discovery.md).
 - **No HA for Postgres.** The same DB is reachable from every app replica, which keeps the audit-log invariant trivially correct (every successful buy/sell still commits in one transaction with its audit row, regardless of which replica handled the call) but leaves Postgres as a single point of failure. Treating real DB HA seriously means streaming replication, a cluster manager, and a connection router - all out of scope here. See [ADR 0001](docs/adr/0001-ha-via-shared-db.md).

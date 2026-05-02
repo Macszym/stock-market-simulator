@@ -70,7 +70,14 @@ func run() error {
 
 	repo := storage.NewPostgres(pool)
 	svc := service.NewService(repo, slog.Default())
-	srv := api.NewServer(svc, slog.Default(), stop)
+	// /chaos exits hard via os.Exit(1) instead of routing through stop()'s
+	// graceful drain. Defers are skipped on purpose - this simulates the
+	// unannounced node failure the HA setup is meant to survive. SIGTERM and
+	// SIGINT keep the graceful path via stop().
+	srv := api.NewServer(svc, slog.Default(), func() {
+		slog.Warn("chaos endpoint invoked, exiting")
+		os.Exit(1)
+	})
 
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.HTTP.Port,

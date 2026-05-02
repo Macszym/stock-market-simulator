@@ -9,9 +9,10 @@ import (
 	"github.com/Macszym/stock-market-simulator/internal/domain"
 )
 
-// chaosShutdownDelay gives the response time to leave the socket before the
-// shutdown signal cancels in-flight connections. Without it the client sees
-// EOF or, behind a load balancer, a 502.
+// chaosShutdownDelay gives the 202 response time to leave the socket before
+// the process exits. Without it the client sees EOF and, behind a load
+// balancer, Caddy treats the request as a connection failure and retries it
+// on a sibling replica - cascading the kill across the cluster.
 const chaosShutdownDelay = 100 * time.Millisecond
 
 type stocksResponse struct {
@@ -142,9 +143,13 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toLogResponse(entries))
 }
 
-// handleChaos triggers the same graceful shutdown path as SIGTERM. The shutdown
-// runs in a goroutine after a short delay so the response leaves the socket
-// before the listener is torn down.
+// handleChaos abruptly terminates this instance after the 202 response leaves
+// the socket. Replying first is required: any HTTP status disables Caddy's
+// lb_try_duration retry, so only this replica dies. Without the response,
+// /chaos would cascade-kill replicas one after another. The exit hook is
+// injected (os.Exit(1) in production, a counter in tests). In-flight requests
+// on this instance are cut without graceful drain - that is the chaos; the
+// load balancer's retry window covers it for clients on other endpoints.
 func (s *Server) handleChaos(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"message": "shutting down"})
 	go func() {
