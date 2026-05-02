@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-The recruitment task requires the system to keep serving requests after `POST /chaos` kills an instance. That implies more than one instance of the application running concurrently, behind a load balancer that fails the killed instance over.
+The task spec requires the system to keep serving requests after `POST /chaos` kills an instance. That implies more than one instance of the application running concurrently, behind a load balancer that fails the killed instance over.
 
 The cleanest answer at the architecture level would be: replicate everything that holds state, including the database. In practice, real Postgres HA needs streaming replication, a cluster manager (Patroni, repmgr, Stolon, or pg_auto_failover) to orchestrate failover, a connection router that follows the leader (PgBouncer + HAProxy, or a managed primary-standby endpoint), and an answer for split-brain. Each of those components is a non-trivial design choice with its own failure modes; building a credible version of any of them is a multi-week effort and obscures the patterns this task is meant to demonstrate (transactional invariants, atomic buy/sell, audit log integrity).
 

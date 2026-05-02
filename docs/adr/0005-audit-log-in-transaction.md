@@ -10,10 +10,10 @@ Accepted
 
 The task spec says the audit log "should log only successful operations". Read literally, this is a precision claim: the log carries each operation that took effect, no more and no less. Two failure modes break that claim:
 
-- **Audit row without state change.** A successful insert into `audit_log` followed by a failed state update (or a process crash between them) leaves the log claiming an operation that never happened. A reviewer reading `GET /log` sees a buy of `AAPL` for `w1`; `GET /wallets/w1` shows no `AAPL`. The audit lies.
+- **Audit row without state change.** A successful insert into `audit_log` followed by a failed state update (or a process crash between them) leaves the log claiming an operation that never happened. A client reading `GET /log` sees a buy of `AAPL` for `w1`; `GET /wallets/w1` shows no `AAPL`. The audit lies.
 - **State change without audit row.** A successful state update followed by a failed audit insert leaves an operation invisible to `GET /log`. Reconciling stock movements after the fact becomes guesswork.
 
-Either failure mode is the kind of contract bug a FinTech reviewer flags first. The two writes have to commit or fail together.
+Either failure mode breaks the spec's audit-log contract directly. The two writes have to commit or fail together.
 
 Postgres holds bank state, wallet state, and the audit log in one database (see ADR 0003), so the cheapest way to bind them is a single transaction.
 

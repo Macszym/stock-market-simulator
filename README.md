@@ -72,7 +72,7 @@ Caddy uses DNS-based service discovery: it queries the Docker DNS resolver every
 3. `lb_try_duration 5s` retries the failed upstream attempt within the same client request, so the failover is invisible to the client.
 4. The DNS refresh window picks up the restarted replica without reloading Caddy.
 
-Postgres is intentionally **not** replicated. Real database HA (streaming replication, failover orchestration, split-brain resolution) is well beyond the scope of this recruitment task; the rationale is in [ADR 0001](docs/adr/0001-ha-via-shared-db.md), and the LB design is in [ADR 0002](docs/adr/0002-caddy-dns-discovery.md).
+Postgres is intentionally **not** replicated. Real database HA (streaming replication, failover orchestration, split-brain resolution) is well beyond the scope of a single-binary deliverable; the rationale is in [ADR 0001](docs/adr/0001-ha-via-shared-db.md), and the LB design is in [ADR 0002](docs/adr/0002-caddy-dns-discovery.md).
 
 ## API
 
@@ -195,7 +195,7 @@ Together these tests verify two invariants: total stock is preserved across mixe
 
 ## What's Not Implemented (Next Steps)
 
-A few things were left out deliberately because they would either inflate the scope past the recruitment task or duplicate work that production infrastructure normally owns.
+A few things were left out deliberately because they would either inflate the scope past what this exercise needs to demonstrate or duplicate work that production infrastructure normally owns.
 
 **Postgres high availability.** The application runs N replicas behind Caddy, but every one of them talks to a single Postgres container. A real production deployment would replace this with a managed primary/standby (RDS, Cloud SQL, Supabase) or a self-hosted streaming-replication setup behind a connection router. The application code does not need to change for that swap; only the connection string does. The reasoning lives in [ADR 0001](docs/adr/0001-ha-via-shared-db.md).
 

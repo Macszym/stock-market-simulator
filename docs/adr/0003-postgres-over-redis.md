@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-Buy and sell each have to update three rows together: the bank balance for the stock, the buyer's or seller's wallet entry, and a row in the audit log. The task spec is explicit that the audit log records only successful operations, which means an audit row without the matching state change (or the other way around) is a contract bug a reviewer will catch immediately.
+Buy and sell each have to update three rows together: the bank balance for the stock, the buyer's or seller's wallet entry, and a row in the audit log. The task spec is explicit that the audit log records only successful operations, which means an audit row without the matching state change (or the other way around) is a direct violation of the spec's audit-log contract.
 
 Splitting state and audit between two stores is the obvious place to look for "scalability" or "separation of concerns". The cost is that the two stores then have to agree on partial failure, and getting them to agree means either two-phase commit (rare client support, painful operationally) or eventual consistency (a time window in which the audit log lies). Both add weight that a single transactional store does not, and at the scale and shape of this task there is nothing on the other side of the trade to justify paying for it.
 
