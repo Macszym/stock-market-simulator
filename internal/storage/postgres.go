@@ -134,7 +134,16 @@ func (p *Postgres) BuyStock(ctx context.Context, walletID, stockName string) err
 
 // SellStock returns one unit of stockName from walletID's holdings back to the
 // bank and writes a SELL entry to the audit log, all in a single transaction.
+// The wallet is auto-created up-front and persists even if the sell itself
+// fails, so the wallet creation is not undone by the transaction rollback.
 func (p *Postgres) SellStock(ctx context.Context, walletID, stockName string) error {
+	if _, err := p.pool.Exec(ctx,
+		`INSERT INTO wallets (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
+		walletID,
+	); err != nil {
+		return fmt.Errorf("upsert wallet %q: %w", walletID, err)
+	}
+
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -155,8 +164,8 @@ func (p *Postgres) SellStock(ctx context.Context, walletID, stockName string) er
 		return fmt.Errorf("lock bank_stocks %q: %w", stockName, err)
 	}
 
-	// Atomic decrement guarded by quantity > 0. Zero rows affected covers
-	// missing wallet, missing holding and depleted holding alike.
+	// Atomic decrement guarded by quantity > 0. Zero rows affected means the
+	// wallet has no holding for stockName.
 	ct, err := tx.Exec(ctx,
 		`UPDATE wallet_stocks SET quantity = quantity - 1 WHERE wallet_id = $1 AND stock_name = $2 AND quantity > 0`,
 		walletID, stockName,

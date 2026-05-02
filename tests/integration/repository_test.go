@@ -247,3 +247,29 @@ func TestPostgres_GetAuditLog_OrderedByID(t *testing.T) {
 	require.Less(t, entries[0].ID, entries[1].ID, "audit log must be ordered by id ascending")
 	require.False(t, entries[0].CreatedAt.IsZero(), "created_at must be populated by DB default")
 }
+
+func TestPostgres_SellStock_AutoCreatesWalletOnMissing(t *testing.T) {
+	cleanDB(t)
+	repo := storage.NewPostgres(pool)
+	ctx := context.Background()
+
+	require.NoError(t, repo.SetBankStocks(ctx, []domain.Stock{{Name: "AAPL", Quantity: 5}}))
+
+	err := repo.SellStock(ctx, "newwallet", "AAPL")
+	require.ErrorIs(t, err, domain.ErrInsufficientWalletStock)
+
+	var exists bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM wallets WHERE id = $1)`, "newwallet").Scan(&exists))
+	require.True(t, exists, "missing wallet must be auto-created on sell")
+
+	var bankQty int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT quantity FROM bank_stocks WHERE name = 'AAPL'`).Scan(&bankQty))
+	require.Equal(t, int64(5), bankQty, "bank quantity must be unchanged on failed sell")
+
+	var auditCount int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_log`).Scan(&auditCount))
+	require.Equal(t, int64(0), auditCount, "failed sell must not write an audit row")
+}

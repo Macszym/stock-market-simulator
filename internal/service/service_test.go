@@ -91,13 +91,13 @@ func (f *fakeRepo) BuyStock(_ context.Context, walletID, stockName string) error
 }
 
 func (f *fakeRepo) SellStock(_ context.Context, walletID, stockName string) error {
+	if _, ok := f.wallets[walletID]; !ok {
+		f.wallets[walletID] = map[string]int64{}
+	}
 	if _, ok := f.bank[stockName]; !ok {
 		return domain.ErrStockNotFound
 	}
-	holdings, ok := f.wallets[walletID]
-	if !ok {
-		return domain.ErrInsufficientWalletStock
-	}
+	holdings := f.wallets[walletID]
 	qty, ok := holdings[stockName]
 	if !ok || qty <= 0 {
 		return domain.ErrInsufficientWalletStock
@@ -340,6 +340,7 @@ func TestService_SellStock_MissingWallet(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrInsufficientWalletStock)
 	require.Equal(t, int64(5), repo.bank["AAPL"], "bank unchanged")
 	require.Empty(t, repo.auditLog)
+	require.Contains(t, repo.wallets, "missing", "missing wallet should be auto-created")
 }
 
 func TestService_SellStock_ExistingWalletNoHolding(t *testing.T) {

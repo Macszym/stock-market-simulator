@@ -146,13 +146,13 @@ func (f *fakeService) SellStock(_ context.Context, walletID, stockName string) e
 	if f.sellErr != nil {
 		return f.sellErr
 	}
+	if _, ok := f.wallets[walletID]; !ok {
+		f.wallets[walletID] = map[string]int64{}
+	}
 	if _, ok := f.bank[stockName]; !ok {
 		return domain.ErrStockNotFound
 	}
-	holdings, ok := f.wallets[walletID]
-	if !ok {
-		return domain.ErrInsufficientWalletStock
-	}
+	holdings := f.wallets[walletID]
 	qty, ok := holdings[stockName]
 	if !ok || qty <= 0 {
 		return domain.ErrInsufficientWalletStock
