@@ -39,6 +39,8 @@ curl http://localhost:8080/stocks
 
 Requires Docker with Compose v2 (Docker Desktop 4.30+ or equivalent). No additional runtime, build tooling, or third-party shell (Git Bash, WSL2) is needed on the host.
 
+For scope notes and deliberate omissions, see [What's Not Implemented](#whats-not-implemented-next-steps) at the end of this README.
+
 ## Architecture
 
 ```mermaid
