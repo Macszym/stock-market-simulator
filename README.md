@@ -123,7 +123,7 @@ curl -X POST http://localhost:8080/chaos
 
 ## API Errors
 
-All error responses share the same shape: `{"error":"human message","code":"STABLE_ENUM"}`. The code is the contract; the message is informational.
+All error responses share the same structure: `{"error":"human message","code":"STABLE_ENUM"}`. The code is the contract; the message is informational.
 
 | Status | Code | Trigger |
 |---|---|---|
