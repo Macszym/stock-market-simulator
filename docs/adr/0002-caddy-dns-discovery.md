@@ -1,11 +1,5 @@
 # 0002. Caddy with DNS-based service discovery
 
-Date: 2026-05-01
-
-## Status
-
-Accepted
-
 ## Context
 
 The compose stack runs N app replicas (ADR 0001). The load balancer in front of them needs to:

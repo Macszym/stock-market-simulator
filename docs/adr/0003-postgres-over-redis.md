@@ -1,11 +1,5 @@
 # 0003. PostgreSQL as the single source of truth
 
-Date: 2026-05-01
-
-## Status
-
-Accepted
-
 ## Context
 
 Buy and sell each have to update three rows together: the bank balance for the stock, the buyer's or seller's wallet entry, and a row in the audit log. The task spec is explicit that the audit log records only successful operations, which means an audit row without the matching state change (or the other way around) is a direct violation of the spec's audit-log contract.

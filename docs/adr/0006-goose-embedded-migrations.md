@@ -1,11 +1,5 @@
 # 0006. Goose migrations embedded in the binary
 
-Date: 2026-05-01
-
-## Status
-
-Accepted
-
 ## Context
 
 The task requires the system to start with a single command, and the runtime image is distroless (`gcr.io/distroless/static-debian13:nonroot`): no shell, no package manager, no migration CLI. The schema has to land in Postgres before the first request hits a handler, but the moving parts available at runtime are limited to whatever the application binary itself can do.

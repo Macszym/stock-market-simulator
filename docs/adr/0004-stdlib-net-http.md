@@ -1,11 +1,5 @@
 # 0004. net/http standard library for routing
 
-Date: 2026-05-01
-
-## Status
-
-Accepted
-
 ## Context
 
 The API exposes eight endpoints with method-specific routing (`GET /stocks`, `POST /stocks`, `POST /chaos`, etc.) and two path parameters (`{wallet_id}`, `{stock_name}`). Go 1.22 added method-aware route patterns and named path parameters to the stdlib `http.ServeMux`, removing the historical reason most Go HTTP services pull in a third-party router.

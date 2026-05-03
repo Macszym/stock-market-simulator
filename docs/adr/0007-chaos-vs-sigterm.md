@@ -1,11 +1,5 @@
 # 0007. POST /chaos and SIGTERM are separate shutdown paths
 
-Date: 2026-05-02
-
-## Status
-
-Accepted
-
 ## Context
 
 The task spec defines two related but semantically distinct shutdown scenarios:

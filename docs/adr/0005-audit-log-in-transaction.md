@@ -1,11 +1,5 @@
 # 0005. Audit log written inside the buy/sell transaction
 
-Date: 2026-05-01
-
-## Status
-
-Accepted
-
 ## Context
 
 The task spec says the audit log "should log only successful operations". Read literally, this is a precision claim: the log carries each operation that took effect, no more and no less. Two failure modes break that claim:

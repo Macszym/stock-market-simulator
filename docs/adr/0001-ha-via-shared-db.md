@@ -1,11 +1,5 @@
 # 0001. High availability via replicated app and shared Postgres
 
-Date: 2026-05-01
-
-## Status
-
-Accepted
-
 ## Context
 
 The task spec requires the system to keep serving requests after `POST /chaos` kills an instance. That implies more than one instance of the application running concurrently, behind a load balancer that fails the killed instance over.
