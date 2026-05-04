@@ -78,7 +78,9 @@ Postgres is intentionally **not** replicated. Real database HA (streaming replic
 
 ## API
 
-All endpoints accept and return JSON. Wallet IDs and stock names are arbitrary strings. The full OpenAPI 3.1 spec is in [`docs/openapi.yaml`](docs/openapi.yaml), or rendered as Swagger UI at <https://macszym.github.io/stock-market-simulator/>.
+The API models a tiny stock exchange. A single **bank** holds the global supply of each stock; **wallets** buy or sell one unit at a time against that bank, with every successful operation appended to an **audit log** in the same DB transaction as the state change. Wallets are addressed by arbitrary strings and auto-created on first buy/sell, so there is no separate wallet-creation call.
+
+All endpoints accept and return JSON. The full OpenAPI 3.1 spec is in [`docs/openapi.yaml`](docs/openapi.yaml), or rendered as Swagger UI at <https://macszym.github.io/stock-market-simulator/>.
 
 | Method | Path | Notes |
 |---|---|---|
